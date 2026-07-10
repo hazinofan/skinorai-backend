@@ -6,11 +6,26 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import bcrypt from 'bcrypt';
-import { LoginDto, RegisterDto } from './dto/auth.dto';
+import {
+  LoginDto,
+  RegisterDto,
+  UpdatePasswordDto,
+  UpdateProfileDto,
+} from './dto/auth.dto';
 import { AuthResponse, GoogleProfile, JwtUser, PublicUser } from './auth.types';
+import { UserEntity } from './entities/user.entity';
 import { UsersService } from './users.service';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const SUPPORTED_SKIN_GOALS = new Set([
+  'hydration',
+  'acne',
+  'barrier_repair',
+  'redness',
+  'oily_skin',
+  'morning_routine',
+  'sensitive_skin',
+]);
 
 @Injectable()
 export class AuthService {
@@ -57,13 +72,82 @@ export class AuthService {
   }
 
   async getCurrentUser(jwtUser: JwtUser): Promise<PublicUser> {
+    const user = await this.findUserOrThrow(jwtUser);
+    return this.usersService.toPublicUser(user);
+  }
+
+  async updateCurrentUser(
+    jwtUser: JwtUser,
+    updateProfileDto: UpdateProfileDto,
+  ): Promise<PublicUser> {
+    const user = await this.findUserOrThrow(jwtUser);
+
+    if (typeof updateProfileDto.name !== 'undefined') {
+      const nextName = updateProfileDto.name.trim();
+      if (!nextName) {
+        throw new BadRequestException('Name is required.');
+      }
+      user.name = nextName;
+    }
+
+    const preferredSkinGoal =
+      updateProfileDto.preferredSkinGoal ?? updateProfileDto.skinGoal;
+
+    if (typeof preferredSkinGoal !== 'undefined') {
+      user.preferredSkinGoal = this.validateSkinGoal(preferredSkinGoal);
+    }
+
+    const savedUser = await this.usersService.save(user);
+    return this.usersService.toPublicUser(savedUser);
+  }
+
+  async updatePassword(
+    jwtUser: JwtUser,
+    updatePasswordDto: UpdatePasswordDto,
+  ): Promise<{ success: true }> {
+    const user = await this.findUserOrThrow(jwtUser);
+
+    if (!user.passwordHash) {
+      throw new BadRequestException(
+        'Password changes are unavailable for this account.',
+      );
+    }
+
+    const currentPassword =
+      updatePasswordDto.currentPassword ?? updatePasswordDto.oldPassword;
+    const newPassword =
+      updatePasswordDto.newPassword ?? updatePasswordDto.password;
+
+    if (!currentPassword) {
+      throw new BadRequestException('Current password is required.');
+    }
+
+    const isValidPassword = await bcrypt.compare(
+      currentPassword,
+      user.passwordHash,
+    );
+
+    if (!isValidPassword) {
+      throw new UnauthorizedException('Current password is incorrect.');
+    }
+
+    user.passwordHash = await bcrypt.hash(
+      this.validatePassword(newPassword),
+      12,
+    );
+    await this.usersService.save(user);
+
+    return { success: true };
+  }
+
+  private async findUserOrThrow(jwtUser: JwtUser): Promise<UserEntity> {
     const user = await this.usersService.findById(jwtUser.sub);
 
     if (!user) {
       throw new UnauthorizedException('User not found.');
     }
 
-    return this.usersService.toPublicUser(user);
+    return user;
   }
 
   private buildAuthResponse(user: PublicUser): AuthResponse {
@@ -94,5 +178,15 @@ export class AuthService {
     }
 
     return value;
+  }
+
+  private validateSkinGoal(value?: string): string {
+    const normalizedValue = value?.trim();
+
+    if (!normalizedValue || !SUPPORTED_SKIN_GOALS.has(normalizedValue)) {
+      throw new BadRequestException('Unsupported skin goal.');
+    }
+
+    return normalizedValue;
   }
 }

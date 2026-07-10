@@ -9,6 +9,7 @@ export type PublicUser = {
   planStatus: PlanStatus;
   freeScansUsed: number;
   freeScanLimit: number;
+  preferredSkinGoal?: string | null;
 };
 
 export type StoredUser = PublicUser & {

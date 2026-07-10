@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Patch,
   Post,
   Req,
   Res,
@@ -16,7 +17,12 @@ import type {
   JwtUser,
   PublicUser,
 } from './auth.types';
-import { LoginDto, RegisterDto } from './dto/auth.dto';
+import {
+  LoginDto,
+  RegisterDto,
+  UpdatePasswordDto,
+  UpdateProfileDto,
+} from './dto/auth.dto';
 import { GoogleAuthGuard } from './guards/google-auth.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
@@ -49,6 +55,24 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   me(@Req() request: AuthenticatedRequest): Promise<PublicUser> {
     return this.authService.getCurrentUser(request.user);
+  }
+
+  @Patch('me')
+  @UseGuards(JwtAuthGuard)
+  updateProfile(
+    @Req() request: AuthenticatedRequest,
+    @Body() updateProfileDto: UpdateProfileDto,
+  ): Promise<PublicUser> {
+    return this.authService.updateCurrentUser(request.user, updateProfileDto);
+  }
+
+  @Patch('password')
+  @UseGuards(JwtAuthGuard)
+  updatePassword(
+    @Req() request: AuthenticatedRequest,
+    @Body() updatePasswordDto: UpdatePasswordDto,
+  ): Promise<{ success: true }> {
+    return this.authService.updatePassword(request.user, updatePasswordDto);
   }
 
   @Get('google')

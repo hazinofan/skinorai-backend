@@ -49,6 +49,10 @@ export class UsersService {
     return this.usersRepository.findOneBy({ id: userId });
   }
 
+  save(user: UserEntity): Promise<UserEntity> {
+    return this.usersRepository.save(user);
+  }
+
   async upsertGoogleUser({
     googleId,
     email,
@@ -90,6 +94,7 @@ export class UsersService {
       planStatus: user.planStatus ?? 'free',
       freeScansUsed: user.freeScansUsed ?? 0,
       freeScanLimit: 3,
+      preferredSkinGoal: user.preferredSkinGoal ?? null,
     };
   }
 

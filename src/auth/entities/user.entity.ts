@@ -33,6 +33,9 @@ export class UserEntity {
   @Column({ name: 'free_scans_used', type: 'int', default: 0 })
   freeScansUsed: number;
 
+  @Column({ name: 'preferred_skin_goal', type: 'varchar', length: 50, nullable: true })
+  preferredSkinGoal?: string | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
