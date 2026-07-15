@@ -14,12 +14,7 @@ export type ProductType =
   | 'exfoliant'
   | 'treatment';
 
-export type SkinType =
-  | 'dry'
-  | 'oily'
-  | 'combination'
-  | 'sensitive'
-  | 'normal';
+export type SkinType = 'dry' | 'oily' | 'combination' | 'sensitive' | 'normal';
 
 export type SkinGoal =
   | 'hydration'

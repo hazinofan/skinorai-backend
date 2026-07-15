@@ -1,19 +1,20 @@
-﻿import {
-  BadRequestException,
+import {
   HttpException,
   HttpStatus,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
-import { AnalyzeScanRequestDto } from '../ai/dto/analyze-scan-request.dto';
 import { AnalyzeScanResponseDto } from '../ai/dto/analyze-scan-response.dto';
+import { ConversationMessage, ProductExtraction } from '../ai/types/ai.types';
 import { UserEntity } from '../auth/entities/user.entity';
+import { FaceScanRecordEntity } from './entities/face-scan-record.entity';
+import { ProductExtractionEntity } from './entities/product-extraction.entity';
 import { ScanRecordEntity } from './entities/scan-record.entity';
 
 export type PlanStatus = 'free' | 'pro';
-
 export type QuotaStatus = {
   planStatus: PlanStatus;
   freeScanLimit: number;
@@ -22,30 +23,6 @@ export type QuotaStatus = {
   freePromptLimit: number;
   promptCount: number;
   promptsRemaining: number;
-};
-
-export type ScanConversationListItem = {
-  id: string;
-  productName: string;
-  skinGoal?: string;
-  promptCount: number;
-  createdAt: Date;
-  updatedAt: Date;
-  analysisSummary?: string;
-  analysisVerdict?: string;
-};
-
-export type ScanConversationMessage = {
-  id: string;
-  role: 'assistant' | 'user';
-  content: string;
-  createdAt: string;
-};
-
-export type ScanConversationDetail = ScanConversationListItem & {
-  ingredients: string[];
-  analysisResult: unknown;
-  conversation: ScanConversationMessage[];
 };
 
 const FREE_SCAN_LIMIT = 3;
@@ -57,75 +34,187 @@ export class UsageService {
   constructor(
     private readonly dataSource: DataSource,
     @InjectRepository(UserEntity)
-    private readonly usersRepository: Repository<UserEntity>,
+    private readonly users: Repository<UserEntity>,
     @InjectRepository(ScanRecordEntity)
-    private readonly scanRecordsRepository: Repository<ScanRecordEntity>,
+    private readonly scans: Repository<ScanRecordEntity>,
+    @InjectRepository(ProductExtractionEntity)
+    private readonly extractions: Repository<ProductExtractionEntity>,
+    @InjectRepository(FaceScanRecordEntity)
+    private readonly faceScans: Repository<FaceScanRecordEntity>,
   ) {}
 
   async assertCanAnalyze(userId: string): Promise<QuotaStatus> {
     const user = await this.findUserOrThrow(userId);
-    this.normalizeUserQuotaFields(user);
+    this.normalizeUser(user);
     const quota = this.buildQuotaStatus(user);
-
     if (user.planStatus !== 'pro' && user.freeScansUsed >= FREE_SCAN_LIMIT) {
       this.throwUpgradeRequired('scan-limit', quota);
     }
-
     return quota;
   }
 
-  async recordScan({
+  async assertPro(userId: string): Promise<UserEntity> {
+    const user = await this.findUserOrThrow(userId);
+    this.normalizeUser(user);
+    if (user.planStatus !== 'pro') {
+      throw new HttpException(
+        {
+          message: 'Face scanning requires the Pro plan.',
+          reason: 'face-scan-pro-required',
+        },
+        HttpStatus.PAYMENT_REQUIRED,
+      );
+    }
+    return user;
+  }
+
+  async saveExtraction({
     userId,
-    request,
-    analysisResult,
+    extraction,
+    mimeType,
+    imageBytes,
+    provider,
+    model,
+    inputTokens,
+    outputTokens,
+    latencyMs,
   }: {
     userId: string;
-    request: AnalyzeScanRequestDto;
+    extraction: ProductExtraction;
+    mimeType: string;
+    imageBytes: number;
+    provider: string;
+    model: string;
+    inputTokens: number;
+    outputTokens: number;
+    latencyMs: number;
+  }) {
+    return this.extractions.save(
+      this.extractions.create({
+        userId,
+        extraction,
+        mimeType,
+        imageBytes,
+        provider,
+        model,
+        inputTokens,
+        outputTokens,
+        latencyMs,
+      }),
+    );
+  }
+
+  async getExtractionOwned(
+    userId: string,
+    extractionId: string,
+  ): Promise<ProductExtractionEntity> {
+    const record = await this.extractions.findOneBy({
+      id: extractionId,
+      userId,
+    });
+    if (!record)
+      throw new NotFoundException(
+        'Product extraction not found for this user.',
+      );
+    return record;
+  }
+
+  async recordProductScan({
+    userId,
+    productName,
+    skinGoal,
+    ingredients,
+    extractedProductData,
+    trustedProductData,
+    fullIngredientListVisible,
+    analysisResult,
+    analysisProvider,
+    analysisModel,
+    initialMessage,
+  }: {
+    userId: string;
+    productName: string;
+    skinGoal: string;
+    ingredients: string[];
+    extractedProductData?: unknown;
+    trustedProductData?: unknown;
+    fullIngredientListVisible: boolean;
     analysisResult: AnalyzeScanResponseDto;
-  }): Promise<{ scanId: string; quota: QuotaStatus }> {
+    analysisProvider: string;
+    analysisModel: string;
+    initialMessage: ConversationMessage;
+  }): Promise<{ scan: ScanRecordEntity; quota: QuotaStatus }> {
     return this.dataSource.transaction(async (manager) => {
       const user = await manager.findOne(UserEntity, {
         where: { id: userId },
         lock: { mode: 'pessimistic_write' },
       });
-
-      if (!user) {
-        throw new NotFoundException('User not found.');
-      }
-
-      this.normalizeUserQuotaFields(user);
-
+      if (!user) throw new NotFoundException('User not found.');
+      this.normalizeUser(user);
       if (user.planStatus !== 'pro' && user.freeScansUsed >= FREE_SCAN_LIMIT) {
         this.throwUpgradeRequired('scan-limit', this.buildQuotaStatus(user));
       }
-
       if (user.planStatus !== 'pro') {
         user.freeScansUsed += 1;
         await manager.save(UserEntity, user);
       }
+      const scan = await manager.save(
+        ScanRecordEntity,
+        manager.create(ScanRecordEntity, {
+          userId,
+          productName,
+          skinGoal,
+          ingredients,
+          extractedProductData,
+          trustedProductData,
+          fullIngredientListVisible,
+          analysisResult,
+          conversation: [initialMessage],
+          promptCount: 0,
+          analysisProvider,
+          analysisModel,
+        }),
+      );
+      return { scan, quota: this.buildQuotaStatus(user, scan) };
+    });
+  }
 
-      const scanRecord = manager.create(ScanRecordEntity, {
-        userId,
-        productName: request.productName?.trim() || 'Produit analyse',
-        skinGoal: request.skinGoal,
-        ingredients: request.ingredients ?? [],
-        analysisResult,
-        conversation: [
-          this.buildAssistantMessage(
-            this.buildInitialAnalysisMessage({
-              productName: request.productName?.trim() || 'Produit analyse',
-              analysisResult,
-            }),
-          ),
-        ],
-        promptCount: 0,
+  async getProductScanForChat(
+    userId: string,
+    scanId: string,
+  ): Promise<{ user: UserEntity; scan: ScanRecordEntity }> {
+    const [user, scan] = await Promise.all([
+      this.findUserOrThrow(userId),
+      this.scans.findOneBy({ id: scanId, userId }),
+    ]);
+    if (!scan) throw new NotFoundException('Scan not found for this user.');
+    this.normalizeUser(user);
+    if (user.planStatus !== 'pro' && scan.promptCount >= FREE_PROMPT_LIMIT) {
+      this.throwUpgradeRequired(
+        'prompt-limit',
+        this.buildQuotaStatus(user, scan),
+      );
+    }
+    return { user, scan };
+  }
+
+  async appendProductConversation(
+    userId: string,
+    scanId: string,
+    messages: ConversationMessage[],
+  ) {
+    return this.dataSource.transaction(async (manager) => {
+      const scan = await manager.findOne(ScanRecordEntity, {
+        where: { id: scanId, userId },
+        lock: { mode: 'pessimistic_write' },
       });
-      const savedScan = await manager.save(ScanRecordEntity, scanRecord);
-
-      return {
-        scanId: savedScan.id,
-        quota: this.buildQuotaStatus(user, savedScan),
-      };
+      if (!scan) throw new NotFoundException('Scan not found for this user.');
+      scan.conversation = [
+        ...this.normalizeConversation(scan.conversation),
+        ...messages,
+      ];
+      scan.promptCount += 1;
+      return manager.save(ScanRecordEntity, scan);
     });
   }
 
@@ -141,145 +230,186 @@ export class UsageService {
     answer: string;
   }): Promise<QuotaStatus> {
     if (!scanId) {
-      throw new BadRequestException('scanId is required to ask about a product.');
+      return this.getQuota(userId);
     }
 
+    const now = new Date().toISOString();
+    const messages: ConversationMessage[] = [
+      {
+        id: randomUUID(),
+        role: 'user',
+        content: question,
+        createdAt: now,
+        provider: 'local-fallback',
+        model: 'legacy-scan-chat',
+        requestType: 'text_chat',
+        inputTokens: 0,
+        outputTokens: 0,
+        latencyMs: 0,
+      },
+      {
+        id: randomUUID(),
+        role: 'assistant',
+        content: answer,
+        createdAt: now,
+        provider: 'local-fallback',
+        model: 'legacy-scan-chat',
+        requestType: 'text_chat',
+        inputTokens: 0,
+        outputTokens: 0,
+        latencyMs: 0,
+      },
+    ];
+
+    const scan = await this.appendProductConversation(userId, scanId, messages);
+    const user = await this.findUserOrThrow(userId);
+    return this.buildQuotaStatus(user, scan);
+  }
+  async saveProductSummary(userId: string, scanId: string, summary: string) {
+    const scan = await this.scans.findOneBy({ id: scanId, userId });
+    if (!scan) throw new NotFoundException('Scan not found for this user.');
+    scan.conversationSummary = summary;
+    await this.scans.save(scan);
+  }
+
+  async createFaceScan({
+    userId,
+    skinGoal,
+    observations,
+    guidance,
+    imageMimeTypes,
+    initialMessage,
+  }: {
+    userId: string;
+    skinGoal?: string;
+    observations: unknown;
+    guidance: unknown;
+    imageMimeTypes: string[];
+    initialMessage: ConversationMessage;
+  }) {
+    return this.faceScans.save(
+      this.faceScans.create({
+        userId,
+        skinGoal: skinGoal ?? null,
+        observations,
+        guidance,
+        conversation: [initialMessage],
+        promptCount: 0,
+        consentAccepted: true,
+        imageMimeTypes,
+      }),
+    );
+  }
+
+  async getFaceScanForChat(
+    userId: string,
+    faceScanId: string,
+  ): Promise<{ user: UserEntity; scan: FaceScanRecordEntity }> {
+    const user = await this.assertPro(userId);
+    const scan = await this.faceScans.findOneBy({ id: faceScanId, userId });
+    if (!scan)
+      throw new NotFoundException('Face scan not found for this user.');
+    return { user, scan };
+  }
+
+  async appendFaceConversation(
+    userId: string,
+    faceScanId: string,
+    messages: ConversationMessage[],
+  ) {
     return this.dataSource.transaction(async (manager) => {
-      const user = await manager.findOne(UserEntity, {
-        where: { id: userId },
+      const scan = await manager.findOne(FaceScanRecordEntity, {
+        where: { id: faceScanId, userId },
         lock: { mode: 'pessimistic_write' },
       });
-
-      if (!user) {
-        throw new NotFoundException('User not found.');
-      }
-
-      this.normalizeUserQuotaFields(user);
-
-      const scanRecord = await manager.findOne(ScanRecordEntity, {
-        where: { id: scanId, userId },
-        lock: { mode: 'pessimistic_write' },
-      });
-
-      if (!scanRecord) {
-        throw new NotFoundException('Scan not found for this user.');
-      }
-
-      if (user.planStatus !== 'pro' && scanRecord.promptCount >= FREE_PROMPT_LIMIT) {
-        this.throwUpgradeRequired(
-          'prompt-limit',
-          this.buildQuotaStatus(user, scanRecord),
-        );
-      }
-
-      scanRecord.promptCount += 1;
-      const existingConversation = this.normalizeConversation(scanRecord.conversation);
-      scanRecord.conversation = [
-        ...existingConversation,
-        this.buildUserMessage(question),
-        this.buildAssistantMessage(answer),
+      if (!scan)
+        throw new NotFoundException('Face scan not found for this user.');
+      scan.conversation = [
+        ...this.normalizeConversation(scan.conversation),
+        ...messages,
       ];
-      const savedScan = await manager.save(ScanRecordEntity, scanRecord);
-
-      return this.buildQuotaStatus(user, savedScan);
+      scan.promptCount += 1;
+      return manager.save(FaceScanRecordEntity, scan);
     });
+  }
+
+  async saveFaceSummary(userId: string, faceScanId: string, summary: string) {
+    const scan = await this.faceScans.findOneBy({ id: faceScanId, userId });
+    if (!scan)
+      throw new NotFoundException('Face scan not found for this user.');
+    scan.conversationSummary = summary;
+    await this.faceScans.save(scan);
   }
 
   async getQuota(userId: string, scanId?: string): Promise<QuotaStatus> {
     const user = await this.findUserOrThrow(userId);
-    const scanRecord = scanId
-      ? await this.scanRecordsRepository.findOneBy({ id: scanId, userId })
+    const scan = scanId
+      ? await this.scans.findOneBy({ id: scanId, userId })
       : undefined;
-
-    return this.buildQuotaStatus(user, scanRecord ?? undefined);
+    return this.buildQuotaStatus(user, scan ?? undefined);
   }
 
-  async getScanConversation(
-    userId: string,
-    scanId: string,
-  ): Promise<ScanConversationDetail> {
-    const scanRecord = await this.scanRecordsRepository.findOneBy({ id: scanId, userId });
-
-    if (!scanRecord) {
-      throw new NotFoundException('Scan not found for this user.');
-    }
-
-    const analysis =
-      scanRecord.analysisResult &&
-      typeof scanRecord.analysisResult === 'object' &&
-      !Array.isArray(scanRecord.analysisResult)
-        ? (scanRecord.analysisResult as {
-            summary?: string;
-            verdict?: string;
-          })
-        : undefined;
-
+  async getScanConversation(userId: string, scanId: string) {
+    const scan = await this.scans.findOneBy({ id: scanId, userId });
+    if (!scan) throw new NotFoundException('Scan not found for this user.');
+    const analysis = this.asObject(scan.analysisResult);
     return {
-      id: scanRecord.id,
-      productName: scanRecord.productName,
-      skinGoal: scanRecord.skinGoal,
-      promptCount: scanRecord.promptCount,
-      createdAt: scanRecord.createdAt,
-      updatedAt: scanRecord.updatedAt,
+      id: scan.id,
+      productName: scan.productName,
+      skinGoal: scan.skinGoal,
+      promptCount: scan.promptCount,
+      createdAt: scan.createdAt,
+      updatedAt: scan.updatedAt,
       analysisSummary: analysis?.summary,
       analysisVerdict: analysis?.verdict,
-      ingredients: scanRecord.ingredients ?? [],
-      analysisResult: scanRecord.analysisResult,
-      conversation: this.normalizeConversation(scanRecord.conversation),
+      ingredients: scan.ingredients ?? [],
+      analysisResult: scan.analysisResult,
+      conversation: this.normalizeConversation(scan.conversation),
+      fullIngredientListVisible: scan.fullIngredientListVisible,
     };
   }
 
-  async listUserScans(userId: string): Promise<ScanConversationListItem[]> {
-    const scanRecords = await this.scanRecordsRepository.find({
+  async listUserScans(userId: string) {
+    const scans = await this.scans.find({
       where: { userId },
       order: { updatedAt: 'DESC', createdAt: 'DESC' },
     });
-
-    return scanRecords.map((scanRecord) => {
-      const analysis =
-        scanRecord.analysisResult &&
-        typeof scanRecord.analysisResult === 'object' &&
-        !Array.isArray(scanRecord.analysisResult)
-          ? (scanRecord.analysisResult as {
-              summary?: string;
-              verdict?: string;
-            })
-          : undefined;
-
+    return scans.map((scan) => {
+      const analysis = this.asObject(scan.analysisResult);
       return {
-        id: scanRecord.id,
-        productName: scanRecord.productName,
-        skinGoal: scanRecord.skinGoal,
-        promptCount: scanRecord.promptCount,
-        createdAt: scanRecord.createdAt,
-        updatedAt: scanRecord.updatedAt,
+        id: scan.id,
+        productName: scan.productName,
+        skinGoal: scan.skinGoal,
+        promptCount: scan.promptCount,
+        createdAt: scan.createdAt,
+        updatedAt: scan.updatedAt,
         analysisSummary: analysis?.summary,
         analysisVerdict: analysis?.verdict,
       };
     });
   }
 
-  private async findUserOrThrow(userId: string): Promise<UserEntity> {
-    const user = await this.usersRepository.findOneBy({ id: userId });
-
-    if (!user) {
-      throw new NotFoundException('User not found.');
-    }
-
-    return user;
+  async getFaceScan(userId: string, id: string) {
+    await this.assertPro(userId);
+    const scan = await this.faceScans.findOneBy({ id, userId });
+    if (!scan)
+      throw new NotFoundException('Face scan not found for this user.');
+    return {
+      id: scan.id,
+      skinGoal: scan.skinGoal,
+      observations: scan.observations,
+      guidance: scan.guidance,
+      conversation: this.normalizeConversation(scan.conversation),
+      createdAt: scan.createdAt,
+      updatedAt: scan.updatedAt,
+    };
   }
 
-  private normalizeConversation(value: unknown): ScanConversationMessage[] {
-    if (!Array.isArray(value)) {
-      return [];
-    }
-
-    return value.filter((item): item is ScanConversationMessage => {
-      if (!item || typeof item !== 'object') {
-        return false;
-      }
-
-      const candidate = item as Partial<ScanConversationMessage>;
+  normalizeConversation(value: unknown): ConversationMessage[] {
+    if (!Array.isArray(value)) return [];
+    return value.filter((item): item is ConversationMessage => {
+      if (!item || typeof item !== 'object') return false;
+      const candidate = item as Partial<ConversationMessage>;
       return (
         typeof candidate.id === 'string' &&
         (candidate.role === 'assistant' || candidate.role === 'user') &&
@@ -289,72 +419,31 @@ export class UsageService {
     });
   }
 
-  private buildMessage(
-    role: 'assistant' | 'user',
-    content: string,
-  ): ScanConversationMessage {
-    return {
-      id: `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      role,
-      content,
-      createdAt: new Date().toISOString(),
-    };
+  private async findUserOrThrow(userId: string) {
+    const user = await this.users.findOneBy({ id: userId });
+    if (!user) throw new NotFoundException('User not found.');
+    return user;
   }
 
-  private buildAssistantMessage(content: string): ScanConversationMessage {
-    return this.buildMessage('assistant', content);
-  }
-
-  private buildUserMessage(content: string): ScanConversationMessage {
-    return this.buildMessage('user', content);
-  }
-
-  private buildInitialAnalysisMessage({
-    productName,
-    analysisResult,
-  }: {
-    productName: string;
-    analysisResult: AnalyzeScanResponseDto;
-  }): string {
-    const positives = analysisResult.positives
-      .slice(0, 3)
-      .map((item) => item.ingredient)
-      .filter(Boolean);
-    const watchouts = analysisResult.watchouts
-      .slice(0, 3)
-      .map((item) => item.ingredient)
-      .filter(Boolean);
-
-    return [
-      `${productName}: ${analysisResult.summary}`,
-      positives.length ? `Points forts: ${positives.join(', ')}.` : null,
-      watchouts.length ? `A surveiller: ${watchouts.join(', ')}.` : null,
-      analysisResult.nextStep ? `Prochaine etape: ${analysisResult.nextStep}` : null,
-    ]
-      .filter(Boolean)
-      .join('\n\n');
-  }
-
-  private normalizeUserQuotaFields(user: UserEntity): void {
+  private normalizeUser(user: UserEntity) {
     user.planStatus = user.planStatus ?? 'free';
     user.freeScansUsed = user.freeScansUsed ?? 0;
   }
 
   private buildQuotaStatus(
     user: UserEntity,
-    scanRecord?: Pick<ScanRecordEntity, 'promptCount'>,
+    scan?: Pick<ScanRecordEntity, 'promptCount'>,
   ): QuotaStatus {
-    const freeScansUsed = user.freeScansUsed ?? 0;
-    const promptCount = scanRecord?.promptCount ?? 0;
+    this.normalizeUser(user);
     const isPro = user.planStatus === 'pro';
-
+    const promptCount = scan?.promptCount ?? 0;
     return {
-      planStatus: user.planStatus ?? 'free',
+      planStatus: user.planStatus,
       freeScanLimit: FREE_SCAN_LIMIT,
-      freeScansUsed,
+      freeScansUsed: user.freeScansUsed,
       freeScansRemaining: isPro
         ? PRO_REMAINING_ALLOWANCE
-        : Math.max(0, FREE_SCAN_LIMIT - freeScansUsed),
+        : Math.max(0, FREE_SCAN_LIMIT - user.freeScansUsed),
       freePromptLimit: FREE_PROMPT_LIMIT,
       promptCount,
       promptsRemaining: isPro
@@ -379,6 +468,10 @@ export class UsageService {
       HttpStatus.PAYMENT_REQUIRED,
     );
   }
+
+  private asObject(value: unknown): Record<string, unknown> | undefined {
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : undefined;
+  }
 }
-
-

@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   Body,
   Controller,
@@ -14,107 +14,103 @@
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import type { Request } from 'express';
-import { AiService } from '../ai/ai.service';
 import { AnalyzeScanRequestDto } from '../ai/dto/analyze-scan-request.dto';
-import { AnalyzeScanResponseDto } from '../ai/dto/analyze-scan-response.dto';
+import { AnalysisService } from '../ai/analysis.service';
+import { ChatService } from '../ai/chat.service';
 import type { JwtUser } from '../auth/auth.types';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { ExtractIngredientsResponseDto } from '../ocr/dto/extract-ingredients-response.dto';
-import { OcrService } from '../ocr/ocr.service';
 import { UsageService } from '../usage/usage.service';
 import { MulterExceptionFilter } from './multer-exception.filter';
+import { ScanMessageDto } from './dto';
 
-const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
+const MAX_MULTER_BYTES = 8 * 1024 * 1024;
 const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 type AuthenticatedRequest = Request & { user: JwtUser };
+
+function imageUpload(field: string) {
+  return FileInterceptor(field, {
+    storage: memoryStorage(),
+    limits: { fileSize: MAX_MULTER_BYTES },
+    fileFilter: (_request, file, callback) => {
+      if (!ALLOWED_MIME_TYPES.has(file.mimetype)) {
+        callback(
+          new BadRequestException(
+            'Unsupported file type. Use JPEG, PNG, or WebP.',
+          ),
+          false,
+        );
+        return;
+      }
+      callback(null, true);
+    },
+  });
+}
 
 @Controller('api/scans')
 @UseFilters(MulterExceptionFilter)
 @UseGuards(JwtAuthGuard)
 export class ScansController {
   constructor(
-    private readonly aiService: AiService,
-    private readonly ocrService: OcrService,
-    private readonly usageService: UsageService,
+    private readonly analysis: AnalysisService,
+    private readonly chat: ChatService,
+    private readonly usage: UsageService,
   ) {}
 
   @Get()
-  async listScans(@Req() request: AuthenticatedRequest) {
-    return this.usageService.listUserScans(request.user.sub);
+  listScans(@Req() request: AuthenticatedRequest) {
+    return this.usage.listUserScans(request.user.sub);
   }
 
   @Get(':id')
-  async getScanConversation(
+  getScanConversation(
     @Param('id') scanId: string,
     @Req() request: AuthenticatedRequest,
   ) {
-    return this.usageService.getScanConversation(request.user.sub, scanId);
+    return this.usage.getScanConversation(request.user.sub, scanId);
   }
 
-  @Post('analyze')
-  async analyzeScan(
-    @Body() analyzeScanRequestDto: AnalyzeScanRequestDto,
+  @Post('extract-product')
+  @UseInterceptors(imageUpload('image'))
+  extractProduct(
+    @UploadedFile() file: Express.Multer.File,
     @Req() request: AuthenticatedRequest,
-  ): Promise<AnalyzeScanResponseDto> {
-    await this.usageService.assertCanAnalyze(request.user.sub);
-    const analysisResult = await this.aiService.analyzeScan(analyzeScanRequestDto);
-    const usage = await this.usageService.recordScan({
-      userId: request.user.sub,
-      request: analyzeScanRequestDto,
-      analysisResult,
-    });
-
-    return {
-      ...analysisResult,
-      scanId: usage.scanId,
-      quota: usage.quota,
-    };
+  ) {
+    if (!file) throw new BadRequestException('Image is required.');
+    return this.analysis.extractProduct(request.user.sub, file);
   }
 
   @Post('extract-ingredients')
-  @UseInterceptors(
-    FileInterceptor('file', {
-      storage: memoryStorage(),
-      limits: {
-        fileSize: MAX_FILE_SIZE_BYTES,
-      },
-      fileFilter: (_request, file, callback) => {
-        if (!ALLOWED_MIME_TYPES.has(file.mimetype)) {
-          callback(
-            new BadRequestException(
-              'Unsupported file type. Use JPEG, PNG, or WEBP.',
-            ),
-            false,
-          );
-          return;
-        }
-
-        callback(null, true);
-      },
-    }),
-  )
-  async extractIngredients(
+  @UseInterceptors(imageUpload('file'))
+  extractIngredientsAlias(
     @UploadedFile() file: Express.Multer.File,
-  ): Promise<ExtractIngredientsResponseDto> {
-    if (!file) {
-      throw new BadRequestException('File is required.');
-    }
+    @Req() request: AuthenticatedRequest,
+  ) {
+    if (!file) throw new BadRequestException('File is required.');
+    return this.analysis.extractProduct(request.user.sub, file);
+  }
 
-    if (!ALLOWED_MIME_TYPES.has(file.mimetype)) {
-      throw new BadRequestException(
-        'Unsupported file type. Use JPEG, PNG, or WEBP.',
-      );
-    }
+  @Post('analyze')
+  analyzeScan(
+    @Body() dto: AnalyzeScanRequestDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.analysis.analyzeProduct(request.user.sub, dto);
+  }
 
-    if (file.size > MAX_FILE_SIZE_BYTES) {
-      throw new BadRequestException(
-        'File is too large. Max file size is 10 MB.',
-      );
-    }
-
-    return this.ocrService.extractIngredientsFromImage(file);
+  @Post(':scanId/messages')
+  @UseInterceptors(imageUpload('image'))
+  sendMessage(
+    @Param('scanId') scanId: string,
+    @Body() dto: ScanMessageDto,
+    @UploadedFile() image: Express.Multer.File | undefined,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.chat.productMessage({
+      userId: request.user.sub,
+      scanId,
+      message: dto.message.trim(),
+      image,
+    });
   }
 }
-
-

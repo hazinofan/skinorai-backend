@@ -3,7 +3,6 @@ export type ScanVerdict =
   | 'good_choice'
   | 'use_with_caution'
   | 'not_ideal';
-
 export type WatchoutSeverity = 'low' | 'medium' | 'high';
 
 export class PositiveIngredientDto {
@@ -11,13 +10,11 @@ export class PositiveIngredientDto {
   reason: string;
   tag: string;
 }
-
 export class WatchoutIngredientDto {
   ingredient: string;
   reason: string;
   severity: WatchoutSeverity;
 }
-
 export class QuotaStatusDto {
   planStatus: 'free' | 'pro';
   freeScanLimit: number;
@@ -27,7 +24,6 @@ export class QuotaStatusDto {
   promptCount: number;
   promptsRemaining: number;
 }
-
 export class AnalyzeScanResponseDto {
   scanId?: string;
   quota?: QuotaStatusDto;

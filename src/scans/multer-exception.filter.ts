@@ -13,7 +13,7 @@ export class MulterExceptionFilter implements ExceptionFilter {
     const response = host.switchToHttp().getResponse<Response>();
     const message =
       exception.code === 'LIMIT_FILE_SIZE'
-        ? 'File is too large. Max file size is 10 MB.'
+        ? 'File is too large. Max file size is 8 MB.'
         : exception.message;
 
     const badRequest = new BadRequestException(message).getResponse();

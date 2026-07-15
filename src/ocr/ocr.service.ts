@@ -1,7 +1,6 @@
-import {
+﻿import {
   Injectable,
   InternalServerErrorException,
-  Logger,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -29,7 +28,7 @@ type IngredientExtraction = {
 
 const INGREDIENT_KEYWORDS = [
   'ingredients',
-  'ingrédients',
+  'ingr?dients',
   'inci',
   'composition',
   'ingredientes',
@@ -48,10 +47,10 @@ const STOP_KEYWORDS = [
 ];
 
 const METADATA_TOKEN_PATTERN =
-  /^\s*(?:\(?(?:inci|ingredients|ingr[ée]dients|ingrÃ©dients)\)?|:)\s*$/i;
+  /^\s*(?:\(?(?:inci|ingredients|ingr[?e]dients|ingr?f?dients)\)?|:)\s*$/i;
 
 const METADATA_PREFIX_PATTERN =
-  /^\s*(?:\(?(?:inci|ingredients|ingr[ée]dients|ingrÃ©dients)\)?\s*[:.-]?\s*)+/i;
+  /^\s*(?:\(?(?:inci|ingredients|ingr[?e]dients|ingr?f?dients)\)?\s*[:.-]?\s*)+/i;
 
 const OCR_CORRECTIONS: Array<[RegExp, string]> = [
   [/\bAloe\s+Barbadens\s+Leaf\s+Juice\b/gi, 'Aloe Barbadensis Leaf Juice'],
@@ -60,25 +59,33 @@ const OCR_CORRECTIONS: Array<[RegExp, string]> = [
 
 @Injectable()
 export class OcrService {
-  private readonly logger = new Logger(OcrService.name);
-
   constructor(private readonly configService: ConfigService) {}
+
+  isConfigured(): boolean {
+    return Boolean(
+      this.configService.get<string>('GOOGLE_VISION_API_KEY')?.trim(),
+    );
+  }
 
   async extractIngredientsFromImage(
     file: Express.Multer.File,
   ): Promise<ExtractIngredientsResponseDto> {
-    const rawText = await this.detectText(file.buffer);
+    return this.extractIngredientsFromBuffer(file.buffer, file.mimetype);
+  }
+
+  async extractIngredientsFromBuffer(
+    buffer: Buffer,
+    mimeType = 'image/jpeg',
+  ): Promise<ExtractIngredientsResponseDto> {
+    void mimeType;
+    const rawText = await this.detectText(buffer);
     const extraction = this.extractIngredients(rawText);
-    const result = {
+    return {
       rawText,
       ingredientsText: extraction.ingredientsText,
       ingredients: extraction.ingredients,
       warnings: extraction.warnings,
     };
-
-    this.logger.log(`OCR extraction result: ${JSON.stringify(result)}`);
-
-    return result;
   }
 
   private async detectText(imageBuffer: Buffer): Promise<string> {
@@ -211,7 +218,7 @@ export class OcrService {
       .filter((line) => line && !METADATA_TOKEN_PATTERN.test(line))
       .join('\n')
       .replace(METADATA_PREFIX_PATTERN, '')
-      .replace(/^[\s:;,.•·-]+/, '')
+      .replace(/^[\s:;,.????-]+/, '')
       .trim();
 
     return this.applyOcrCorrections(
@@ -247,13 +254,13 @@ export class OcrService {
     const seen = new Set<string>();
 
     return ingredientsText
-      .split(/[,;•·]+/)
+      .split(/[,;????]+/)
       .map((ingredient) =>
         this.applyOcrCorrections(
           ingredient
             .replace(METADATA_PREFIX_PATTERN, '')
-            .replace(/^[\s:;,.•·-]+/, '')
-            .replace(/[\s:;,.•·-]+$/, '')
+            .replace(/^[\s:;,.????-]+/, '')
+            .replace(/[\s:;,.????-]+$/, '')
             .replace(/\s+/g, ' ')
             .trim(),
         ),

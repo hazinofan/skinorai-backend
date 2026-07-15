@@ -40,6 +40,10 @@ const DEFAULT_OPENAI_MAX_RETRIES = 0;
 const DEFAULT_OPENAI_ANALYSIS_MODEL = 'gpt-4.1-mini';
 const MAX_PROMPT_INGREDIENTS_TEXT_LENGTH = 1800;
 
+type ValidatedAnalyzeScanRequest = AnalyzeScanRequestDto & {
+  ingredients: string[];
+};
+
 const GOAL_DETAILS: Record<
   SkinGoal,
   {
@@ -337,7 +341,7 @@ export class AiService {
 
   private validateRequest(
     request: AnalyzeScanRequestDto,
-  ): AnalyzeScanRequestDto {
+  ): ValidatedAnalyzeScanRequest {
     if (!request || typeof request !== 'object') {
       throw new BadRequestException('Request body is required.');
     }
@@ -401,7 +405,7 @@ export class AiService {
   }
 
   private async requestOpenAiAnalysis(
-    request: AnalyzeScanRequestDto,
+    request: ValidatedAnalyzeScanRequest,
   ): Promise<string> {
     const client = this.client;
 
@@ -452,7 +456,7 @@ export class AiService {
     return outputText;
   }
 
-  private buildAnalysisPrompt(request: AnalyzeScanRequestDto): string {
+  private buildAnalysisPrompt(request: ValidatedAnalyzeScanRequest): string {
     return [
       `Selected skin goal: ${request.skinGoal}`,
       `Product name: ${request.productName || 'unknown'}`,
@@ -487,7 +491,7 @@ export class AiService {
   }
 
   private buildFallbackAnalysis(
-    request: AnalyzeScanRequestDto,
+    request: ValidatedAnalyzeScanRequest,
   ): AnalyzeScanResponseDto {
     const goal = GOAL_DETAILS[request.skinGoal];
     const positives = request.ingredients
