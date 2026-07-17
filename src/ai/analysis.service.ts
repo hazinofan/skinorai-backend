@@ -20,10 +20,7 @@ import {
   productExtractionJsonSchema,
   productExtractionSchema,
 } from './schemas/product-extraction.schema';
-import {
-  faceObservationJsonSchema,
-  faceObservationSchema,
-} from './schemas/face-observation.schema';
+import { faceObservationSchema } from './schemas/face-observation.schema';
 import {
   analysisResponseSchema,
   faceGuidanceSchema,
@@ -268,7 +265,7 @@ export class AnalysisService {
           mimeType: image.mimeType,
         })),
         schema: faceObservationSchema,
-        jsonSchema: faceObservationJsonSchema,
+        jsonSchema: undefined,
         maxOutputTokens: this.config.geminiFaceMaxOutputTokens,
         requestType: 'face_scan',
       });
@@ -309,6 +306,7 @@ export class AnalysisService {
       guidanceResult = await this.deepseek.generateJson({
         requestType: 'face_scan',
         schema: faceGuidanceSchema,
+        maxOutputTokens: Math.max(this.config.deepseekMaxOutputTokens, 1200),
         messages: [
           { role: 'system', content: FACE_GUIDANCE_SYSTEM_PROMPT },
           {

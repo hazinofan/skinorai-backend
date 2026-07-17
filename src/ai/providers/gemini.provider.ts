@@ -35,7 +35,7 @@ export class GeminiProvider {
     prompt: string;
     images: GeminiImageInput[];
     schema: z.ZodType<T>;
-    jsonSchema: unknown;
+    jsonSchema?: unknown;
     maxOutputTokens: number;
     requestType: string;
   }): Promise<ProviderResult<T>> {
@@ -75,7 +75,7 @@ export class GeminiProvider {
             temperature: 0.1,
             maxOutputTokens,
             responseMimeType: 'application/json',
-            responseJsonSchema: jsonSchema,
+            ...(jsonSchema ? { responseJsonSchema: jsonSchema } : {}),
             thinkingConfig: {
               includeThoughts: false,
               thinkingLevel: ThinkingLevel.MINIMAL,
@@ -165,6 +165,7 @@ export class GeminiProvider {
         provider: 'gemini',
         success: false,
         code: this.errorCode(lastError),
+        detail: this.errorDetail(lastError),
       }),
     );
     if (lastError instanceof ServiceUnavailableException) throw lastError;
@@ -195,5 +196,38 @@ export class GeminiProvider {
     if (error instanceof Error && error.name === 'AbortError') return 'timeout';
     const status = (error as { status?: number })?.status;
     return status ? `http-${status}` : 'provider-error';
+  }
+  private errorDetail(error: unknown) {
+    if (!error || error instanceof AiProviderError) return undefined;
+    const candidate = error as {
+      error?: unknown;
+      message?: string;
+      status?: number;
+      name?: string;
+    };
+    const detail =
+      this.stringifyErrorPayload(candidate.error) ||
+      candidate.message ||
+      candidate.name;
+
+    return this.sanitizeDetail(detail);
+  }
+
+  private stringifyErrorPayload(payload: unknown) {
+    if (!payload) return '';
+    if (typeof payload === 'string') return payload;
+    try {
+      return JSON.stringify(payload);
+    } catch {
+      return '';
+    }
+  }
+
+  private sanitizeDetail(detail?: string) {
+    if (!detail) return undefined;
+    return detail
+      .replace(/AIza[0-9A-Za-z_-]{20,}/g, '[redacted-api-key]')
+      .replace(/key=([0-9A-Za-z._-]+)/gi, 'key=[redacted]')
+      .slice(0, 900);
   }
 }

@@ -51,7 +51,7 @@ export class DeepSeekProvider {
       async (attempt) => {
         const completion = await this.client!.chat.completions.create({
           model: this.config.deepseekModel,
-          messages: attempt === 0 ? messages : this.repairMessages(messages),
+          messages: attempt === 0 ? messages : this.repairMessages(messages, requestType),
           temperature: attempt === 0 ? 0.2 : 0,
           max_tokens: attempt === 0 ? tokenBudget : Math.min(Math.max(tokenBudget * 2, tokenBudget + 500), 2_000),
           response_format: { type: 'json_object' },
@@ -174,15 +174,30 @@ export class DeepSeekProvider {
     );
   }
 
-  private repairMessages(messages: Message[]): Message[] {
+  private repairMessages(messages: Message[], requestType: string): Message[] {
     return [
       ...messages,
       {
         role: 'system',
-        content:
-          'The previous provider response was empty or invalid. Return exactly one compact JSON object now: {"answer":"...","suggestions":["..."]}. Do not return markdown, thoughts, or an empty response.',
+        content: this.repairInstruction(requestType),
       },
     ];
+  }
+
+  private repairInstruction(requestType: string) {
+    if (requestType === 'face_scan') {
+      return 'The previous provider response was empty or invalid. Return exactly one compact JSON object now with these keys: {"explanation":"...","priorities":["..."],"routineCategories":[{"step":"...","guidance":"..."}],"potentiallyUsefulIngredients":["..."],"introduceCautiously":["..."],"followUpQuestions":["..."],"disclaimer":"..."}. Keep each array short. Do not return markdown, thoughts, or an empty response.';
+    }
+
+    if (requestType === 'product_analysis') {
+      return 'The previous provider response was empty or invalid. Return exactly one compact JSON object now with the product analysis keys requested by the original system prompt. Do not return markdown, thoughts, or an empty response.';
+    }
+
+    if (requestType === 'summary') {
+      return 'The previous provider response was empty or invalid. Return exactly one compact JSON object now: {"summary":"..."}. Do not return markdown, thoughts, or an empty response.';
+    }
+
+    return 'The previous provider response was empty or invalid. Return exactly one compact JSON object now: {"answer":"...","suggestions":["..."]}. Do not return markdown, thoughts, or an empty response.';
   }
   private isRetryable(error: unknown) {
     if (error instanceof AiProviderError) return error.retryable;

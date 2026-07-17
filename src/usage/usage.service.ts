@@ -389,6 +389,36 @@ export class UsageService {
     });
   }
 
+
+  async listUserFaceScans(userId: string) {
+    await this.assertPro(userId);
+    const scans = await this.faceScans.find({
+      where: { userId },
+      order: { updatedAt: 'DESC', createdAt: 'DESC' },
+    });
+    return scans.map((scan) => {
+      const guidance = this.asObject(scan.guidance);
+      const observations = this.asObject(scan.observations);
+      const firstObservation = Array.isArray(observations?.observations)
+        ? observations.observations[0]
+        : undefined;
+      return {
+        id: scan.id,
+        skinGoal: scan.skinGoal,
+        promptCount: scan.promptCount,
+        createdAt: scan.createdAt,
+        updatedAt: scan.updatedAt,
+        title: scan.skinGoal ? `Analyse visage - ${scan.skinGoal}` : 'Analyse visage',
+        summary:
+          typeof guidance?.explanation === 'string'
+            ? guidance.explanation
+            : typeof firstObservation?.description === 'string'
+              ? firstObservation.description
+              : 'Analyse visage enregistrée.',
+      };
+    });
+  }
+
   async getFaceScan(userId: string, id: string) {
     await this.assertPro(userId);
     const scan = await this.faceScans.findOneBy({ id, userId });
@@ -475,3 +505,4 @@ export class UsageService {
       : undefined;
   }
 }
+

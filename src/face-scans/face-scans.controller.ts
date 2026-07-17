@@ -61,6 +61,10 @@ export class FaceScansController {
     private readonly usage: UsageService,
   ) {}
 
+  @Get()
+  listFaceScans(@Req() request: AuthenticatedRequest) {
+    return this.usage.listUserFaceScans(request.user.sub);
+  }
   @Post('analyze')
   @UseInterceptors(
     FileFieldsInterceptor(
@@ -116,3 +120,4 @@ export class FaceScansController {
     });
   }
 }
+

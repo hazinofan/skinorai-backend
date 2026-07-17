@@ -18,10 +18,7 @@ import { FACE_OBSERVATION_PROMPT } from './prompts/face-observation.prompt';
 import { PRODUCT_IMAGE_CHAT_PROMPT } from './prompts/product-extraction.prompt';
 import { PRODUCT_CHAT_SYSTEM_PROMPT } from './prompts/product-chat.prompt';
 import { chatResponseSchema } from './schemas/analysis-response.schema';
-import {
-  faceObservationJsonSchema,
-  faceObservationSchema,
-} from './schemas/face-observation.schema';
+import { faceObservationSchema } from './schemas/face-observation.schema';
 import {
   productImageChatContextJsonSchema,
   productImageChatContextSchema,
@@ -237,7 +234,7 @@ export class ChatService {
           prompt: FACE_OBSERVATION_PROMPT,
           images: [{ buffer: processed.buffer, mimeType: processed.mimeType }],
           schema: faceObservationSchema,
-          jsonSchema: faceObservationJsonSchema,
+          jsonSchema: undefined,
           maxOutputTokens: this.config.geminiFaceMaxOutputTokens,
           requestType: 'face_chat',
         });
