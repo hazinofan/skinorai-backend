@@ -308,6 +308,11 @@ export class ChatService {
       );
     }
 
+    const librarySuggestions = await this.buildLibrarySuggestions({
+      userMessage: message,
+      answer: deepseekResult.data.answer,
+      skinGoal: scan.skinGoal,
+    });
     const userMessage = buildConversationMessage({
       role: 'user',
       content: message,
@@ -321,6 +326,7 @@ export class ChatService {
       content: deepseekResult.data.answer,
       result: deepseekResult,
       requestType: 'face_chat',
+      librarySuggestions,
     });
     const saved = await this.usage.appendFaceConversation(userId, faceScanId, [
       userMessage,
@@ -336,6 +342,7 @@ export class ChatService {
     return {
       answer: deepseekResult.data.answer,
       suggestions: deepseekResult.data.suggestions,
+      librarySuggestions,
       messages: [userMessage, assistantMessage],
     };
   }

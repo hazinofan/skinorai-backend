@@ -24,3 +24,10 @@ export class FaceMessageDto {
   @MaxLength(2000)
   message: string;
 }
+
+export class RenameFaceConversationDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  title: string;
+}

@@ -4,6 +4,7 @@ import {
   Controller,
   Get,
   Param,
+  Patch,
   Post,
   Req,
   UploadedFile,
@@ -24,7 +25,7 @@ import type { JwtUser } from '../auth/auth.types';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { MulterExceptionFilter } from '../scans/multer-exception.filter';
 import { UsageService } from '../usage/usage.service';
-import { AnalyzeFaceScanDto, FaceMessageDto } from './face-scans.dto';
+import { AnalyzeFaceScanDto, FaceMessageDto, RenameFaceConversationDto } from './face-scans.dto';
 
 const MAX_MULTER_BYTES = 8 * 1024 * 1024;
 const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -102,6 +103,25 @@ export class FaceScansController {
   @Get(':id')
   getFaceScan(@Param('id') id: string, @Req() request: AuthenticatedRequest) {
     return this.usage.getFaceScan(request.user.sub, id);
+  }
+
+  @Patch(':id/title')
+  async renameFaceConversation(
+    @Param('id') faceScanId: string,
+    @Body() dto: RenameFaceConversationDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const scan = await this.usage.renameFaceConversation(
+      request.user.sub,
+      faceScanId,
+      dto.title,
+    );
+    return {
+      id: scan.id,
+      title: scan.customTitle || (scan.skinGoal ? `Analyse visage - ${scan.skinGoal}` : 'Analyse visage'),
+      customTitle: scan.customTitle,
+      updatedAt: scan.updatedAt,
+    };
   }
 
   @Post(':faceScanId/messages')

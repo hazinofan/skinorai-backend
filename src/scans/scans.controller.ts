@@ -4,6 +4,7 @@ import {
   Controller,
   Get,
   Param,
+  Patch,
   Post,
   Req,
   UploadedFile,
@@ -21,7 +22,7 @@ import type { JwtUser } from '../auth/auth.types';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { UsageService } from '../usage/usage.service';
 import { MulterExceptionFilter } from './multer-exception.filter';
-import { ScanMessageDto } from './dto';
+import { RenameConversationDto, ScanMessageDto } from './dto';
 
 const MAX_MULTER_BYTES = 8 * 1024 * 1024;
 const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -68,6 +69,25 @@ export class ScansController {
     @Req() request: AuthenticatedRequest,
   ) {
     return this.usage.getScanConversation(request.user.sub, scanId);
+  }
+
+  @Patch(':id/title')
+  async renameScanConversation(
+    @Param('id') scanId: string,
+    @Body() dto: RenameConversationDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const scan = await this.usage.renameProductConversation(
+      request.user.sub,
+      scanId,
+      dto.title,
+    );
+    return {
+      id: scan.id,
+      productName: scan.productName,
+      customTitle: scan.customTitle,
+      updatedAt: scan.updatedAt,
+    };
   }
 
   @Post('extract-product')

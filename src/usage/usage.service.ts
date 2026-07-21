@@ -265,6 +265,13 @@ export class UsageService {
     const user = await this.findUserOrThrow(userId);
     return this.buildQuotaStatus(user, scan);
   }
+  async renameProductConversation(userId: string, scanId: string, title: string) {
+    const scan = await this.scans.findOneBy({ id: scanId, userId });
+    if (!scan) throw new NotFoundException('Scan not found for this user.');
+    scan.customTitle = title.trim();
+    return this.scans.save(scan);
+  }
+
   async saveProductSummary(userId: string, scanId: string, summary: string) {
     const scan = await this.scans.findOneBy({ id: scanId, userId });
     if (!scan) throw new NotFoundException('Scan not found for this user.');
@@ -333,6 +340,15 @@ export class UsageService {
     });
   }
 
+  async renameFaceConversation(userId: string, faceScanId: string, title: string) {
+    await this.assertPro(userId);
+    const scan = await this.faceScans.findOneBy({ id: faceScanId, userId });
+    if (!scan)
+      throw new NotFoundException('Face scan not found for this user.');
+    scan.customTitle = title.trim();
+    return this.faceScans.save(scan);
+  }
+
   async saveFaceSummary(userId: string, faceScanId: string, summary: string) {
     const scan = await this.faceScans.findOneBy({ id: faceScanId, userId });
     if (!scan)
@@ -356,6 +372,7 @@ export class UsageService {
     return {
       id: scan.id,
       productName: scan.productName,
+      customTitle: scan.customTitle,
       skinGoal: scan.skinGoal,
       promptCount: scan.promptCount,
       createdAt: scan.createdAt,
@@ -379,6 +396,7 @@ export class UsageService {
       return {
         id: scan.id,
         productName: scan.productName,
+        customTitle: scan.customTitle,
         skinGoal: scan.skinGoal,
         promptCount: scan.promptCount,
         createdAt: scan.createdAt,
@@ -408,7 +426,8 @@ export class UsageService {
         promptCount: scan.promptCount,
         createdAt: scan.createdAt,
         updatedAt: scan.updatedAt,
-        title: scan.skinGoal ? `Analyse visage - ${scan.skinGoal}` : 'Analyse visage',
+        title: scan.customTitle || (scan.skinGoal ? `Analyse visage - ${scan.skinGoal}` : 'Analyse visage'),
+        customTitle: scan.customTitle,
         summary:
           typeof guidance?.explanation === 'string'
             ? guidance.explanation

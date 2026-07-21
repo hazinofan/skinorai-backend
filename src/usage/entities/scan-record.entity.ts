@@ -24,6 +24,9 @@ export class ScanRecordEntity {
   @Column({ name: 'product_name', default: 'Produit analysé' })
   productName: string;
 
+  @Column({ name: 'custom_title', type: 'varchar', length: 160, nullable: true })
+  customTitle?: string | null;
+
   @Column({ name: 'skin_goal', type: 'varchar', length: 80, nullable: true })
   skinGoal?: string;
 

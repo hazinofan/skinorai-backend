@@ -24,6 +24,9 @@ export class FaceScanRecordEntity {
   @Column({ name: 'skin_goal', type: 'varchar', length: 80, nullable: true })
   skinGoal?: string | null;
 
+  @Column({ name: 'custom_title', type: 'varchar', length: 160, nullable: true })
+  customTitle?: string | null;
+
   @Column({ type: 'simple-json' })
   observations: unknown;
 
